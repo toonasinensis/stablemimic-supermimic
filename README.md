@@ -87,3 +87,28 @@ SuperMimic acknowledges ControlVAE, robotic_world_model, and DreamerV3.
 
 Copyright 2026 The SuperMimic Authors. The upstream Apache-2.0 license is
 included in [LICENSE](LICENSE).
+
+## G1 Recovery v021B
+
+This configuration uses 40 LAFAN tracking clips and 200 CCRP recovery clips
+at 50 Hz. The recovery clips are retimed by 1.5× and include a 3-second static
+standing tail. Each Recovery episode starts at the first frame of a clip.
+
+The phase gate opens when the recovery reference enters its standing tail,
+or at 8 seconds for longer clips. When the gate is open, an end-pose similarity
+of at least 0.70 triggers Transition and pays the one-shot success bonus.
+Transition blends the recovery and tracking rewards over 1.5 seconds.
+The world model uses soft Recovery failure with temperature 0.01 and a
+straight-through success bonus with temperature 0.03 after the gate opens.
+
+```bash
+CUDA_VISIBLE_DEVICES=0 WANDB_MODE=disabled MUJOCO_GL=egl \
+uv run python -m supermimic.scripts.train_stable_official \
+  --base-config configs/g1_recovery_v021b.json --from-scratch --robot g1 \
+  --tracking-files 'data/g1/tracking/*.npz' \
+  --recovery-files 'data/g1/recovery/*.npz' \
+  --recovery-timing-gate phase --recovery-reset-mode clip_start \
+  --tracking-reset-probability 0.5 --episode-seconds 10 \
+  --num-envs 4096 --iterations 100001 --save-interval 1000 --seed 42 \
+  --output-dir runs/g1-recovery-v021b
+```

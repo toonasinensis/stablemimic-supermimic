@@ -159,10 +159,25 @@ class StableOfficialWorldEnv(WorldModelEnv):
     joints = self.representation.joint_state(state)
     bodies = self.representation.world_frame_bodies(aux, state)
     phase = self.phase_state[1]
-    rec_rates, bonus, failed, scale, next_phase, _, _, stand_timeout = (
-      self.objective.advance(
-        bodies, aux, self.motion, self.motion_times, self.phase_state
-      )
+    (
+      rec_rates,
+      bonus,
+      failed,
+      scale,
+      next_phase,
+      success,
+      _,
+      stand_timeout,
+      current,
+      terminal,
+      bonus_ready,
+    ) = self.objective.advance(
+      bodies,
+      aux,
+      self.motion,
+      self.motion_times,
+      self.phase_state,
+      return_similarity=True,
     )
     tracking = tracking_reward(
       aux,
@@ -185,11 +200,30 @@ class StableOfficialWorldEnv(WorldModelEnv):
       - self.representation.dt * penalty
     )
     reward += self.representation.dt * (rec_rates.sum(-1) + bonus)
+    recovery_term = (failed | stand_timeout).float()
+    objective = self.objective
+    if objective.cfg.recovery_timing_gate == "phase":
+      in_recovery = phase == RECOVERY
+      eligible = (
+        in_recovery & ~success & (self.phase_state[2] >= objective.failure_steps - 1)
+      )
+      failure_probability = torch.sigmoid(
+        (objective.cfg.failure_similarity - current) / 0.01
+      )
+      recovery_term = torch.where(
+        stand_timeout, 1.0, torch.where(eligible, failure_probability, 0.0)
+      )
+      success_probability = torch.sigmoid(
+        (terminal - objective.cfg.terminal_similarity) / 0.03
+      )
+      reward += objective.cfg.success_bonus * torch.where(
+        in_recovery & bonus_ready,
+        success_probability - success_probability.detach(),
+        0.0,
+      )
     nominal_term = super()._compute_term_prob(aux, *self._ref_body_state[:2])
     # A clip cutoff holds the last command during imagined rollouts.
-    term = torch.where(
-      phase == TRACKING, nominal_term, (failed | stand_timeout).float()
-    )
+    term = torch.where(phase == TRACKING, nominal_term, recovery_term)
     self.phase_state = next_phase
     return aux, state, joints, term, reward
 

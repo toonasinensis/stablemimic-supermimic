@@ -1,0 +1,106 @@
+{
+  "runner_cfg": {
+    "output_dir": "runs/g1-recovery-v021b",
+    "wandb_project": "supermimic",
+    "run_name": "g1-recovery-v021b",
+    "wandb_run_path": null,
+    "headless": true,
+    "buffer_size": 1000,
+    "representation": "gencoord",
+    "actor_obs": "proprio",
+    "log_interval": 10,
+    "save_interval": 1000,
+    "history_length": 10,
+    "termination_softness": 0.05,
+    "dynamics_hidden_dims": [
+      2048,
+      2048,
+      2048
+    ],
+    "wm": {
+      "lr": 0.0002,
+      "num_batches": 10,
+      "batch_size": 2048,
+      "horizon": 8,
+      "nominal_error_root_pose_pos": 0.01,
+      "nominal_error_root_pose_ori": 0.02,
+      "nominal_error_joint_pos": 0.1,
+      "nominal_error_joint_vel": 3.14,
+      "nominal_error_body_pos": 0.05,
+      "nominal_error_body_rot": 0.1,
+      "nominal_error_body_vel": 1.0,
+      "nominal_error_body_avel": 3.14
+    },
+    "max_iterations": 100001,
+    "replay_ratio": 16,
+    "actor_type": "mlp",
+    "latent_dim": 32,
+    "actor_hidden_dims": [
+      2048,
+      1024,
+      512,
+      256
+    ],
+    "critic_hidden_dims": [
+      256,
+      128
+    ],
+    "latent_bc_weight": 0.1,
+    "tasks": {
+      "velocity": {
+        "lin_vel_x_range": [
+          -1.5,
+          1.5
+        ],
+        "lin_vel_y_range": [
+          -0.5,
+          0.5
+        ],
+        "ang_vel_z_range": [
+          -3.14,
+          3.14
+        ],
+        "window_frames": 25,
+        "command_noise": [
+          0.5,
+          0.5,
+          0.785
+        ]
+      }
+    },
+    "slot_mix": {
+      "motion": 1.0,
+      "velocity": 0.0
+    },
+    "policy": {
+      "lr": 0.0002,
+      "num_batches": 1,
+      "batch_size": 4096,
+      "noise": 0.0,
+      "horizon": 32,
+      "gamma": 0.99,
+      "survival_masking": true,
+      "beta2": 0.95,
+      "grad_clip_value": 0.1,
+      "lam": 0.95
+    },
+    "sampling_mode": "return",
+    "return_sampler": {
+      "gamma": 0.99,
+      "horizon": 20,
+      "memory": 256,
+      "steepness": 25.0,
+      "explore": 0.5,
+      "keep": 0.1
+    },
+    "from_scratch": true,
+    "reference_mode": "tracking_command_only",
+    "recovery_reset_mode": "clip_start",
+    "seed": 42,
+    "recovery_probability": 0.5,
+    "recovery_failure_temperature": 0.01,
+    "recovery_success_temperature": 0.03,
+    "seed_checkpoint": "",
+    "resume_checkpoint": null
+  }
+}

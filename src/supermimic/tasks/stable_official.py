@@ -115,6 +115,7 @@ class StableOfficialMotionCfg(MotionCommandCfg):
   recovery_probability: float = 0.5
   recovery_multiplier: float = 1.0
   recovery_timeout_s: float = 10.0
+  recovery_timing_gate: str = "off"
   recovery_standing_tail_s: float = 0.0
   recovery_stand_timeout_s: float = 2.0
   recovery_lift: float = 0.03
@@ -146,6 +147,8 @@ class RecoveryObjective:
           "Invalid recovery standing tail or timeout for the motion clips"
         )
     self.transition_frames = round(cfg.transition_s / dt)
+    self.timing_gate_tail_frames = round(3.0 / dt)
+    self.timing_gate_cap = round((cfg.recovery_timeout_s - cfg.transition_s - 0.5) / dt)
 
   def weights(self, phase, transition, override):
     alpha = (transition / self.transition_frames).clamp(0, 1)
@@ -153,16 +156,27 @@ class RecoveryObjective:
     tracking = torch.where((phase == RECOVERY) & override, 1.0, tracking)
     return torch.stack((tracking, 1 - tracking), dim=-1)
 
-  def advance(self, bodies, aux, nominal, motion_times, state):
+  def advance(
+    self, bodies, aux, nominal, motion_times, state, *, return_similarity=False
+  ):
     frame, phase, bad, transition, xy, override, episode, stand_steps = state
-    _, last = bounds(self.motion, frame)
+    first, last = bounds(self.motion, frame)
     successor = (frame + 1).minimum(last)
     scores = recovery_scores(bodies, self.motion.body_state(successor))
     terminal_scores = recovery_scores(bodies, self.motion.body_state(last))
     terminal = recovery_similarity_terms(terminal_scores).sum(-1)
     current = recovery_similarity_terms(scores).sum(-1)
     rec = phase == RECOVERY
+    bonus_ready = torch.ones_like(rec)
+    if self.cfg.recovery_timing_gate == "phase":
+      gate_frame = (
+        (last + 1 - self.timing_gate_tail_frames)
+        .minimum(first + self.timing_gate_cap)
+        .maximum(first)
+      )
+      bonus_ready = successor >= gate_frame
     success = rec & (terminal >= self.cfg.terminal_similarity)
+    success = success & bonus_ready
     bad_next = torch.where(
       rec & ~success & (current < self.cfg.failure_similarity), bad + 1, 0
     )
@@ -198,7 +212,7 @@ class RecoveryObjective:
       recovery_target_scores * (recovery_scale * self.cfg.recovery_multiplier)[:, None]
     )
     bonus = success.float() * self.cfg.success_bonus / self.dt
-    return (
+    result = (
       rates,
       bonus,
       failed,
@@ -217,6 +231,9 @@ class RecoveryObjective:
       completed,
       stand_timed_out,
     )
+    if return_similarity:
+      return (*result, current, terminal, bonus_ready)
+    return result
 
 
 class StableOfficialMotion(MotionCommand):

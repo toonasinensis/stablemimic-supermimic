@@ -31,6 +31,7 @@ def main():
     "--base-config", type=Path, help="JSON runner config for a scratch run."
   )
   p.add_argument("--resume-checkpoint")
+  p.add_argument("--recovery-timing-gate", choices=("off", "phase"), default="off")
   p.add_argument("--from-scratch", action="store_true")
   p.add_argument("--robot", choices=("g1", "roban"), default="g1")
   p.add_argument(
@@ -103,6 +104,7 @@ def main():
   ecfg = stable_official_cfg(a.tracking_files, a.recovery_files, robot=a.robot)
   ecfg.commands["motion"].recovery_probability = cfg.recovery_probability
   ecfg.commands["motion"].recovery_reset_mode = cfg.recovery_reset_mode
+  ecfg.commands["motion"].recovery_timing_gate = a.recovery_timing_gate
   if a.recovery_joint_noise_deg is not None:
     ecfg.commands["motion"].recovery_joint_position_noise = math.radians(
       a.recovery_joint_noise_deg
