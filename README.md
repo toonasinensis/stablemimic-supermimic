@@ -5,12 +5,12 @@ the official SuperMimic world-model backend.
 
 ## Setup
 
-Use Python 3.13 and [uv](https://docs.astral.sh/uv/). Clone this branch and the
+Use Python 3.13 and [uv](https://docs.astral.sh/uv/). Clone this repository and the
 pinned [mjlab_research](https://github.com/HybridRobotics/mjlab_research)
 dependency as siblings.
 
 ```bash
-git clone --branch g1-v021b https://github.com/toonasinensis/stablemimic-supermimic.git
+git clone https://github.com/toonasinensis/stablemimic-supermimic.git
 git clone https://github.com/HybridRobotics/mjlab_research.git
 git -C mjlab_research checkout dd51a9fcc98791a2f0b018b3c7f71a3eefd5ecdd
 cd stablemimic-supermimic
