@@ -31,7 +31,18 @@ def main():
     "--base-config", type=Path, help="JSON runner config for a scratch run."
   )
   p.add_argument("--resume-checkpoint")
+  p.add_argument("--obs-noise-scale", type=float, default=1.0)
   p.add_argument("--recovery-timing-gate", choices=("off", "phase"), default="off")
+  p.add_argument(
+    "--heft-regularization",
+    action="store_true",
+    help="Use the three HEFT-inspired G1 regularizers.",
+  )
+  p.add_argument(
+    "--pd-gain-dr",
+    action="store_true",
+    help="Randomize G1 Kp and Kd independently at every reset.",
+  )
   p.add_argument("--from-scratch", action="store_true")
   p.add_argument("--robot", choices=("g1", "roban"), default="g1")
   p.add_argument(
@@ -54,8 +65,16 @@ def main():
   p.add_argument("--save-interval", type=int, default=5000)
   p.add_argument("--tracking-reset-probability", type=float, default=0.5)
   a = p.parse_args()
+  if not math.isfinite(a.obs_noise_scale) or a.obs_noise_scale < 0:
+    p.error("--obs-noise-scale must be finite and nonnegative")
   if a.base_config is not None and not a.from_scratch:
     p.error("--base-config requires --from-scratch")
+  if a.robot != "g1" and (a.heft_regularization or a.pd_gain_dr):
+    p.error("--heft-regularization and --pd-gain-dr require --robot g1")
+  if a.pd_gain_dr and not a.from_scratch:
+    p.error(
+      "--pd-gain-dr requires --from-scratch because the world model inputs change"
+    )
   if not 0.0 <= a.tracking_reset_probability <= 1.0:
     p.error("--tracking-reset-probability must be between 0 and 1")
   if not 0 <= a.recovery_standing_tail_s < float("inf"):
@@ -89,6 +108,9 @@ def main():
   cfg.seed = a.seed
   cfg.recovery_probability = 1.0 - a.tracking_reset_probability
   cfg.resume_checkpoint = a.resume_checkpoint
+  cfg.heft_regularization = a.heft_regularization
+  cfg.pd_gain_dr = a.pd_gain_dr
+  cfg.obs_noise_scale = a.obs_noise_scale
   cfg.output_dir = a.output_dir
   cfg.run_name = a.output_dir.rsplit("/", 1)[-1]
   cfg.max_iterations = a.iterations
@@ -101,7 +123,13 @@ def main():
   )
   if a.seed_checkpoint is not None:
     del parent
-  ecfg = stable_official_cfg(a.tracking_files, a.recovery_files, robot=a.robot)
+  ecfg = stable_official_cfg(
+    a.tracking_files,
+    a.recovery_files,
+    robot=a.robot,
+    heft_regularization=cfg.heft_regularization,
+    pd_gain_dr=cfg.pd_gain_dr,
+  )
   ecfg.commands["motion"].recovery_probability = cfg.recovery_probability
   ecfg.commands["motion"].recovery_reset_mode = cfg.recovery_reset_mode
   ecfg.commands["motion"].recovery_timing_gate = a.recovery_timing_gate
@@ -122,7 +150,9 @@ def main():
   print(
     f"[INFO] Single-MLP runner: tracking reset probability={a.tracking_reset_probability}, "
     f"recovery reset probability={cfg.recovery_probability}; "
-    "10-frame proprio history + tracking command in every phase",
+    "10-frame proprio history + tracking command in every phase; "
+    f"HEFT regularization={cfg.heft_regularization}, PD gain DR={cfg.pd_gain_dr}; "
+    f"actor observation noise scale={cfg.obs_noise_scale:g}",
     flush=True,
   )
   env = RslRlVecEnvWrapper(ManagerBasedRlEnv(ecfg, device="cuda:0"))

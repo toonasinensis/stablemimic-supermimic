@@ -16,6 +16,17 @@ from supermimic.runners.supermimic_runner import (
   SuperMimicRunnerCfg,
   build_actor,
 )
+from supermimic.sim_context import joint_order_ctrl_ids, nominal_pd_gains
+from supermimic.tasks.g1_regularization import (
+  JOINT_POS_WEIGHT,
+  JOINT_TORQUE_WEIGHT,
+  JOINT_VEL_WEIGHT,
+  joint_pos_cost,
+  joint_torque_cost,
+  joint_vel_cost,
+  requested_torque,
+  torque_reference,
+)
 from supermimic.tasks.stable_official import (
   RECOVERY,
   STATE_FIELDS,
@@ -68,12 +79,50 @@ class TrackingReturnSampler(ReturnSampler):
 
 
 class StableOfficialWorldEnv(WorldModelEnv):
+  _use_heft_regularization = False
+
   def bind_recovery(self, command):
     self.objective = command.objective
     # Both unscaled imitation kernels have a maximum of 5.
     cfg = command.cfg
     max_scale = max(1.0, cfg.recovery_multiplier, cfg.transition_coefficient)
     self.max_step_reward = 5.0 * max_scale * self.representation.dt + cfg.success_bonus
+
+  def bind_heft_regularization(self, env, sim_context):
+    robot = env.scene["robot"]
+    action = env.action_manager.get_term("joint_pos")
+    if tuple(action.target_names) != robot.joint_names or action.cfg.clip is not None:
+      raise ValueError("Expected unclipped position commands in G1 joint order")
+    self._heft_kp, self._heft_kd = nominal_pd_gains(env, joint_order_ctrl_ids(robot))
+    self._heft_torque_reference = torque_reference(robot)
+    self._heft_sim_context = sim_context
+    self._heft_pd_columns = sim_context.find("pd_gains")
+    self._heft_encoder_columns = sim_context.find("encoder_bias")
+    self._heft_substeps = env.cfg.decimation
+    self._use_heft_regularization = True
+
+  def _heft_reward_rate(self, joints, prev_joints, action, sim_ctx):
+    pos, vel = joints.chunk(2, dim=-1)
+    _, prev_vel = prev_joints.chunk(2, dim=-1)
+    # Approximate the last two substeps using the model's constant-acceleration step.
+    mean_vel = vel + (prev_vel - vel) / (2.0 * self._heft_substeps)
+    kp, kd = self._heft_kp, self._heft_kd
+    if self._heft_pd_columns is not None:
+      scales = self._heft_sim_context.denormalize(sim_ctx, self._heft_pd_columns)
+      kp_scale, kd_scale = scales.chunk(2, dim=-1)
+      kp, kd = kp * kp_scale, kd * kd_scale
+    target = self.dynamics.proc(action)
+    if self._heft_encoder_columns is not None:
+      target = target - self._heft_sim_context.denormalize(
+        sim_ctx, self._heft_encoder_columns
+      )
+    request = requested_torque(pos, vel, target, kp, kd)
+    return (
+      JOINT_VEL_WEIGHT * joint_vel_cost(mean_vel)
+      + JOINT_POS_WEIGHT
+      * joint_pos_cost(pos, self.representation._soft_joint_pos_limits)
+      + JOINT_TORQUE_WEIGHT * joint_torque_cost(request, self._heft_torque_reference)
+    )
 
   def sample_initial_states(self):
     return super().sample_initial_states()
@@ -191,13 +240,19 @@ class StableOfficialWorldEnv(WorldModelEnv):
     )
     q, _ = joints.chunk(2, dim=-1)
     lo, hi = self.representation._soft_joint_pos_limits.unbind(-1)
-    penalty = 0.1 * (action - last_action).square().sum(-1) + 2 * (
-      (lo - q).clamp_min(0) + (q - hi).clamp_min(0)
-    ).sum(-1)
+    action_penalty = 0.1 * (action - last_action).square().sum(-1)
+    joint_limit_penalty = 2 * ((lo - q).clamp_min(0) + (q - hi).clamp_min(0)).sum(-1)
+    original_penalty = action_penalty + joint_limit_penalty
+    regularization = -original_penalty
+    if self._use_heft_regularization:
+      prev_joints = self.representation.joint_state(rep_state)
+      regularization = (
+        self._heft_reward_rate(joints, prev_joints, action, sim_ctx) - action_penalty
+      )
     # Scale only imitation, preserving the official regularizers in every phase.
     reward = (
-      scale * (tracking + self.representation.dt * penalty)
-      - self.representation.dt * penalty
+      scale * (tracking + self.representation.dt * original_penalty)
+      + self.representation.dt * regularization
     )
     reward += self.representation.dt * (rec_rates.sum(-1) + bonus)
     recovery_term = (failed | stand_timeout).float()
@@ -240,6 +295,8 @@ class StableOfficialRunnerCfg(SuperMimicRunnerCfg):
   recovery_probability: float = 0.5
   seed_checkpoint: str = ""
   resume_checkpoint: str | None = None
+  heft_regularization: bool = False
+  pd_gain_dr: bool = False
 
 
 def termination_episode_metrics(manager, dones):
@@ -283,8 +340,14 @@ class StableOfficialRunner(SuperMimicRunner):
       "resume_checkpoint",
       "save_interval",
     }
+    legacy_defaults = {
+      "heft_regularization": False,
+      "pd_gain_dr": False,
+      "obs_noise_scale": 1.0,
+    }
     for key, value in asdict(self.cfg).items():
-      if key not in runtime and saved["cfg"].get(key) != value:
+      saved_value = saved["cfg"].get(key, legacy_defaults.get(key))
+      if key not in runtime and saved_value != value:
         raise ValueError(f"Resume config differs for {key}")
     self.policy_learner.actor.load_state_dict(saved["actor"], strict=True)
     self.policy_learner.critic.load_state_dict(saved["critic"], strict=True)
@@ -387,6 +450,8 @@ class StableOfficialRunner(SuperMimicRunner):
       self.device,
     )
     self.wm_env.bind_recovery(self.motion_cmd)
+    if cfg.heft_regularization:
+      self.wm_env.bind_heft_regularization(self.env.unwrapped, self._sim_context)
     self.policy_learner = ActorCriticPolicyLearner(
       actor, critic, self.wm_env, cfg.policy, self.device
     )

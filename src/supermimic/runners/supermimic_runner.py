@@ -55,6 +55,7 @@ class BaseRunnerCfg:
   buffer_size: int = 1000
   representation: str = "gencoord"  # "gencoord" or "maxcoord"
   actor_obs: str = "rep_state"  # "rep_state" or "proprio"
+  obs_noise_scale: float = 1.0
   log_interval: int = 10
   save_interval: int = 1000
   history_length: int = 1
@@ -150,6 +151,7 @@ def build_world_model(cfg: BaseRunnerCfg, env, device: str) -> WorldModel:
     env.unwrapped.cfg.decimation,
     default_joint_pos,
     actor_obs_mode=cfg.actor_obs,
+    obs_noise_scale=cfg.obs_noise_scale,
   ).to(device)
 
   representation.bind(env.unwrapped, sim_context)

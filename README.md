@@ -36,22 +36,28 @@ or at 8 seconds for longer clips. When the gate is open, an end-pose similarity
 of at least 0.70 triggers Transition and pays the one-shot success bonus.
 Transition blends the recovery and tracking rewards over 1.5 seconds.
 The world model uses soft Recovery failure with temperature 0.01 and a
-straight-through success bonus with temperature 0.03 after the gate opens. The separate `recovery_stand_timeout` is disabled in this
-preset. Keep `--recovery-timing-gate phase` in the command to reproduce v021B.
+straight-through success bonus with temperature 0.03 after the gate opens. The
+preset leaves the separate `recovery_stand_timeout` disabled.
+
+The phase recovery baseline from [TARS job 35797](https://open.tars-ai.com/pai/distributed-training/detail/35797)
+uses HEFT-inspired regularization, randomized PD gains, and twice the actor's
+proprioception noise. The verified run used a single RTX 4090 with PyTorch
+2.14.1+cu126, MuJoCo and MuJoCo Warp 3.16.0, and Warp 1.19.0.
 
 ```bash
-CUDA_VISIBLE_DEVICES=0 WANDB_MODE=disabled MUJOCO_GL=egl \
+CUDA_VISIBLE_DEVICES=0 WANDB_MODE=disabled MUJOCO_GL=disable OMP_NUM_THREADS=8 \
 uv run python -m supermimic.scripts.train_stable_official \
   --base-config configs/g1_recovery_v021b.json --from-scratch --robot g1 \
   --tracking-files 'data/g1/tracking/*.npz' \
   --recovery-files 'data/g1/recovery/*.npz' \
   --recovery-timing-gate phase --recovery-reset-mode clip_start \
+  --heft-regularization --pd-gain-dr --obs-noise-scale 2 \
   --tracking-reset-probability 0.5 --episode-seconds 10 \
   --num-envs 4096 --iterations 100001 --save-interval 1000 --seed 42 \
-  --output-dir runs/g1-recovery-v021b
+  --output-dir runs/g1-recovery-phase-obs2
 ```
 
-TensorBoard events are saved under `runs/g1-recovery-v021b/tensorboard/`.
+TensorBoard events are saved under `runs/g1-recovery-phase-obs2/tensorboard/`.
 
 ## Source and license
 

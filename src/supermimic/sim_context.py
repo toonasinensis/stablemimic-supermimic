@@ -153,6 +153,49 @@ class EncoderBiasSpec(SimContextSpec):
     return env.scene[self._asset_name].data.encoder_bias
 
 
+def joint_order_ctrl_ids(robot) -> torch.Tensor:
+  """MuJoCo control indices in G1 joint-state order, one actuator per joint."""
+  actuator_names = robot.actuator_names
+  if len(actuator_names) != robot.num_joints or set(actuator_names) != set(
+    robot.joint_names
+  ):
+    raise ValueError("Expected one named actuator per G1 joint")
+  return robot.indexing.ctrl_ids[
+    [actuator_names.index(name) for name in robot.joint_names]
+  ]
+
+
+def nominal_pd_gains(env, ctrl_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+  return (
+    env.sim.get_default_field("actuator_gainprm")[ctrl_ids, 0],
+    -env.sim.get_default_field("actuator_biasprm")[ctrl_ids, 2],
+  )
+
+
+def read_pd_gains(env, ctrl_ids: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+  return (
+    env.sim.model.actuator_gainprm[:, ctrl_ids, 0],
+    -env.sim.model.actuator_biasprm[:, ctrl_ids, 2],
+  )
+
+
+class PdGainsSpec(SimContextSpec):
+  """One Kp and one Kd multiplier per joint, in joint-state order."""
+
+  name = "pd_gains"
+
+  def bind(self, env: ManagerBasedRlEnv) -> list[tuple[float, float]]:
+    params = env.cfg.events[self.name].params
+    self.ctrl_ids = joint_order_ctrl_ids(env.scene[params["asset_cfg"].name])
+    kp, kd = nominal_pd_gains(env, self.ctrl_ids)
+    self.inverse_defaults = torch.cat((kp, kd)).reciprocal()
+    self.dim = 2 * self.ctrl_ids.numel()
+    return [params["kp_range"]] * kp.numel() + [params["kd_range"]] * kd.numel()
+
+  def read(self, env: ManagerBasedRlEnv) -> torch.Tensor:
+    return torch.cat(read_pd_gains(env, self.ctrl_ids), dim=-1) * self.inverse_defaults
+
+
 class SimContext(nn.Module):
   def __init__(self, specs: list[SimContextSpec], ranges: list[tuple[float, float]]):
     super().__init__()
@@ -172,6 +215,7 @@ class SimContext(nn.Module):
       FootFrictionSpec,
       CoMOffsetSpec,
       EncoderBiasSpec,
+      PdGainsSpec,
     )
     specs = [c() for c in candidates if c.name in env.cfg.events]
     if not specs:

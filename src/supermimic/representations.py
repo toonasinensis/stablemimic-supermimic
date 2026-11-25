@@ -61,6 +61,7 @@ def create_representation(
   decimation: int,
   default_joint_pos: torch.Tensor,
   actor_obs_mode: str,
+  obs_noise_scale: float = 1.0,
 ) -> StateRepresentation:
   """Create a state representation wired up for training and reward compute."""
   if name == "gencoord":
@@ -80,7 +81,7 @@ def create_representation(
   if actor_obs_mode == "proprio":
     rep.register_buffer(
       "_proprio_noise_bounds",
-      rep.proprio_noise_bounds(num_actions, default_joint_pos.device),
+      rep.proprio_noise_bounds(num_actions, default_joint_pos.device) * obs_noise_scale,
       persistent=False,
     )
   rep.dt = dt

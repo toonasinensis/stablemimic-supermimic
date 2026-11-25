@@ -3,7 +3,13 @@
 from dataclasses import dataclass, fields, replace
 
 import torch
-from mjlab.managers import RewardTermCfg, TerminationTermCfg
+from mjlab.envs.mdp import dr
+from mjlab.managers import (
+  EventTermCfg,
+  RewardTermCfg,
+  SceneEntityCfg,
+  TerminationTermCfg,
+)
 from mjlab.tasks.tracking.mdp.commands import (
   MotionCommand,
   MotionCommandCfg,
@@ -12,6 +18,7 @@ from mjlab.tasks.tracking.mdp.commands import (
 from mjlab.utils.lab_api.math import matrix_from_quat
 
 from supermimic.tasks.env_cfgs import gencoord_env_cfg
+from supermimic.tasks.g1_regularization import configure_g1_regularization
 from supermimic.utils.helpers import rotation_error_magnitude
 
 TRACKING, RECOVERY, TRANSITION = range(3)
@@ -460,7 +467,11 @@ def success_reward(env):
   return env.command_manager.get_term("motion").success_rate
 
 
-def stable_official_cfg(tracking, recovery, robot="g1"):
+def stable_official_cfg(
+  tracking, recovery, robot="g1", *, heft_regularization=False, pd_gain_dr=False
+):
+  if robot != "g1" and (heft_regularization or pd_gain_dr):
+    raise ValueError("HEFT regularization and PD gain randomization require G1")
   cfg = gencoord_env_cfg()
   original = cfg.commands["motion"]
   if robot == "roban":
@@ -522,4 +533,16 @@ def stable_official_cfg(tracking, recovery, robot="g1"):
       func=recovery_reward, weight=1.0, params={"index": i}
     )
   cfg.rewards["recovery_success"] = RewardTermCfg(func=success_reward, weight=1.0)
+  if heft_regularization:
+    configure_g1_regularization(cfg)
+  if pd_gain_dr:
+    cfg.events["pd_gains"] = EventTermCfg(
+      func=dr.pd_gains,
+      mode="reset",
+      params={
+        "asset_cfg": SceneEntityCfg("robot"),
+        "kp_range": (0.85, 1.15),
+        "kd_range": (0.85, 1.15),
+      },
+    )
   return cfg
